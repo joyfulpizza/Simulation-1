@@ -17,17 +17,41 @@ let speedMultiplier = {
   slow: 0.5
 }[speedSetting] || 1;
 
+// ================= PERSON =================
 class Person {
   constructor(x, y, group) {
     this.x = x;
     this.y = y;
     this.group = group;
+
     this.health = 10;
     this.target = null;
+
+    // mechanics
+    this.invuln = 0;
+    this.freeze = 0;
+    this.vx = 0;
+    this.vy = 0;
   }
 
   move() {
-    // Move toward target if exists
+    if (this.health <= 0) return;
+
+    // timers
+    if (this.invuln > 0) this.invuln--;
+    if (this.freeze > 0) {
+      this.freeze--;
+      return;
+    }
+
+    // apply knockback velocity
+    this.x += this.vx;
+    this.y += this.vy;
+
+    this.vx *= 0.8;
+    this.vy *= 0.8;
+
+    // combat movement
     if (this.target && this.target.health > 0) {
       let dx = this.target.x - this.x;
       let dy = this.target.y - this.y;
@@ -38,13 +62,29 @@ class Person {
         this.y += (dy/dist) * speedMultiplier;
       }
 
-      if (dist < 10) {
+      if (dist < 10 && this.target.invuln <= 0) {
+        // damage
         this.target.health -= 1;
-        this.target.target = this; // retaliation
+        this.target.invuln = 15;
+
+        // knockback
+        let kx = (this.target.x - this.x) / dist;
+        let ky = (this.target.y - this.y) / dist;
+
+        this.target.vx += kx * 3;
+        this.target.vy += ky * 3;
+
+        // retaliation
+        this.target.target = this;
+
+        // freeze on kill
+        if (this.target.health <= 0) {
+          this.freeze = 20;
+        }
       }
 
     } else {
-      // Cohesion movement (stick to group center)
+      // group cohesion
       let center = this.group.center();
       let dx = center.x - this.x;
       let dy = center.y - this.y;
@@ -55,7 +95,7 @@ class Person {
   }
 
   draw() {
-    ctx.strokeStyle = this.group.color;
+    ctx.strokeStyle = "black";
     ctx.strokeRect(this.x, this.y, 10, 10);
 
     // health bar
@@ -64,35 +104,35 @@ class Person {
   }
 }
 
+// ================= GROUP =================
 class Group {
   constructor() {
     this.members = [];
-    this.color = `rgb(${rand(50,255)}, ${rand(50,255)}, ${rand(50,255)})`;
     this.targetGroup = null;
     this.cooldown = 0;
   }
 
   center() {
+    let alive = this.members.filter(p => p.health > 0);
+    if (alive.length === 0) return { x: 0, y: 0 };
+
     let x = 0, y = 0;
-    this.members.forEach(p => {
+    alive.forEach(p => {
       x += p.x;
       y += p.y;
     });
+
     return {
-      x: x / this.members.length,
-      y: y / this.members.length
+      x: x / alive.length,
+      y: y / alive.length
     };
   }
 }
 
-function rand(min, max) {
-  return Math.random() * (max - min) + min;
-}
-
+// ================= SETUP =================
 let groups = [];
 let people = [];
 
-// Create groups
 for (let i = 0; i < amount; i++) {
   let g = new Group();
   let size = Math.floor(Math.random() * 2) + 2;
@@ -106,7 +146,7 @@ for (let i = 0; i < amount; i++) {
   groups.push(g);
 }
 
-// Engagement system (FIXED)
+// ================= TARGET SYSTEM =================
 function assignTargets() {
   groups.forEach(g => {
     if (g.cooldown > 0) {
@@ -118,8 +158,8 @@ function assignTargets() {
 
     let nearby = groups.find(other => {
       if (other === g) return false;
-      let c2 = other.center();
 
+      let c2 = other.center();
       let dx = c2.x - center.x;
       let dy = c2.y - center.y;
       let dist = Math.sqrt(dx*dx + dy*dy);
@@ -129,41 +169,47 @@ function assignTargets() {
 
     if (nearby) {
       g.targetGroup = nearby;
-      g.cooldown = 120; // prevents flicker
+      g.cooldown = 120;
 
       g.members.forEach((p, i) => {
-        let target = nearby.members[i % nearby.members.length];
-        p.target = target;
+        if (p.health <= 0) return;
+
+        let targets = nearby.members.filter(t => t.health > 0);
+        if (targets.length === 0) return;
+
+        p.target = targets[i % targets.length];
       });
     }
   });
 }
 
-// Draw friend connections
+// ================= DRAW FRIEND LINKS =================
 function drawConnections() {
-  people.forEach(p => {
-    p.group.members.forEach(f => {
-      if (p !== f) {
-        ctx.strokeStyle = p.group.color;
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(f.x, f.y);
-        ctx.stroke();
-      }
+  ctx.strokeStyle = "gray";
+
+  groups.forEach(g => {
+    g.members.forEach(p => {
+      g.members.forEach(f => {
+        if (p !== f && p.health > 0 && f.health > 0) {
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(f.x, f.y);
+          ctx.stroke();
+        }
+      });
     });
   });
 }
 
+// ================= LOOP =================
 function update() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   assignTargets();
 
   people.forEach(p => {
-    if (p.health > 0) {
-      p.move();
-      p.draw();
-    }
+    p.move();
+    p.draw();
   });
 
   drawConnections();
